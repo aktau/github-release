@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 )
 
@@ -17,9 +18,25 @@ func infocmd(opt Options) error {
 	repo := nvls(opt.Info.Repo, EnvRepo)
 	token := nvls(opt.Info.Token, EnvToken)
 	tag := opt.Info.Tag
+	latest := opt.Info.Latest
+	latestTag := opt.Info.LatestTag
 
 	if user == "" || repo == "" {
 		return fmt.Errorf("user and repo need to be passed as arguments")
+	}
+
+	if latest || latestTag {
+		var rel *Release
+		var err error
+		rel, err = LatestRelease(user, repo, token)
+		if err != nil {
+			return err
+		}
+		tag = rel.TagName
+		if latestTag {
+			fmt.Println(tag)
+			return nil
+		}
 	}
 
 	/* find regular git tags */
@@ -155,6 +172,7 @@ func downloadcmd(opt Options) error {
 	tag := opt.Download.Tag
 	name := opt.Download.Name
 	latest := opt.Download.Latest
+	regexed := opt.Download.Regexed
 
 	vprintln("downloading...")
 
@@ -175,20 +193,33 @@ func downloadcmd(opt Options) error {
 	}
 
 	assetId := 0
+	var rx *regexp.Regexp
+	var theName string
+
+	if regexed {
+
+		rx = regexp.MustCompile(name)
+	}
+
 	for _, asset := range rel.Assets {
-		if asset.Name == name {
+		if regexed {
+			theName = rx.FindString(asset.Name)
+		} else {
+			theName = name
+		}
+		if asset.Name == theName {
 			assetId = asset.Id
 		}
 	}
 
 	if assetId == 0 {
-		return fmt.Errorf("coud not find asset named %s", name)
+		return fmt.Errorf("coud not find asset named %s", theName)
 	}
 
 	var resp *http.Response
 	var url string
 	if token == "" {
-		url = GH_URL + fmt.Sprintf("/%s/%s/releases/download/%s/%s", user, repo, tag, name)
+		url = GH_URL + fmt.Sprintf("/%s/%s/releases/download/%s/%s", user, repo, tag, theName)
 		resp, err = http.Get(url)
 	} else {
 		url = ApiURL() + fmt.Sprintf(ASSET_DOWNLOAD_URI, user, repo, assetId)
@@ -214,9 +245,9 @@ func downloadcmd(opt Options) error {
 		return fmt.Errorf("github did not respond with 200 OK but with %v", resp.Status)
 	}
 
-	out, err := os.Create(name)
+	out, err := os.Create(theName)
 	if err != nil {
-		return fmt.Errorf("could not create file %s", name)
+		return fmt.Errorf("could not create file %s", theName)
 	}
 	defer out.Close()
 
